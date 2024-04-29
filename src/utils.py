@@ -235,15 +235,13 @@ def download_data(save_database=True, parse_dates=False, interval='1h', tail=-1,
     results = []
     for symbol in symbols:
       print(f'Download data for symbols: {symbols}')
-      print((symbol, save_database, interval, tail, myenv.all_klines_cols, parse_dates, True, start_date))
+      # print((symbol, save_database, interval, tail, myenv.all_klines_cols, parse_dates, True, start_date))
       process = pool.apply_async(func=get_data, args=(symbol, save_database, interval, tail, myenv.all_klines_cols, parse_dates, True, start_date))
-      print(process)
       process_list.append({'key': f'{symbol}_{interval}', 'process': process})
       # get_data(symbol=symbol, save_database=save_database, interval=interval, tail=tail, columns=myenv.all_klines_cols, parse_dates=parse_dates, start_date=start_date)
     for p in process_list:
       try:
         res = p['process'].get()
-        print(res)
         log.info(f'Download data finished for: {p["key"]} - Shape: {res.shape}')
         results.append(f'{p["key"]}')
       except Exception as e:
@@ -362,7 +360,7 @@ def configure_log(name="MAIN", symbol=None, interval=None, log_level=logging.INF
 def login_binance() -> Client:
   key, sec = get_keys()
   _client = loop.run_until_complete(Client.create(key, sec, requests_params={'timeout': 20}, loop=loop))
-  print('>>>> LOGIN', _client)
+  # print('>>>> LOGIN', _client)
   # _client.REQUEST_TIMEOUT = 20
   return _client
 
@@ -372,7 +370,7 @@ def get_client() -> Client:
   if client is None:
     client = login_binance()
     log.debug(f'New Instance of Client: {client}')
-    print(f'New Instance of Client: {client}')
+    # print(f'New Instance of Client: {client}')
 
   return client
 

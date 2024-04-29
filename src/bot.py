@@ -135,7 +135,7 @@ class Bot:
         self.date_read_kline = datetime.now()
     except Exception as e:
       self.log.error(f'***ERROR*** handle_socket_kline: {e}')
-      sm.send_status_to_telegram(f'{self.ix} ***ERROR*** handle_socket_kline: {e}')
+      sm.send_status_to_telegram(f'{self.ix_symbol} ***ERROR*** handle_socket_kline: {e}')
       if self.mutex.locked():
         self.mutex.release()
 
@@ -145,7 +145,7 @@ class Bot:
     twm.start()
     msg_log = twm.start_kline_socket(callback=self.handle_socket_kline, symbol=self.symbol, interval=self.interval)
     self.log.info(f'ThreadedWebsocketManager: {msg_log}')
-    print('<<<<<self.symbol>>>>', self.symbol)
+    # print('<<<<<self.symbol>>>>', self.symbol)
     symbol_info, symbol_precision, quote_precision, quantity_precision, price_precision, step_size, tick_size = utils.get_symbol_info(self.symbol)
     cont = 0
     cont_aviso = 101
@@ -217,7 +217,7 @@ class Bot:
                 executed_qty = float(order_buy_id['executedQty'])
                 amount_invested = purchased_price * executed_qty
 
-                msg = f'{self.ix}-{strategy}: *ORDER BUY* - {status_buy} OT: {_open_time} AP: ${actual_price:.{symbol_precision}f} PP: ${purchased_price:.{symbol_precision}f} AI: ${amount_to_invest:.2f} '
+                msg = f'{self.ix_symbol}-{strategy}: *ORDER BUY* - {status_buy} OT: {_open_time} AP: ${actual_price:.{symbol_precision}f} PP: ${purchased_price:.{symbol_precision}f} AI: ${amount_to_invest:.2f} '
                 msg += f'TP: ${take_profit:.{symbol_precision}f} SL: ${stop_loss:.{symbol_precision}f} {p_ema_label}: ${p_ema_value:.{symbol_precision}f} '
                 msg += f'TM: {target_margin:.2f}% RSI: {rsi:.2f}% B: ${balance:.{quote_precision}f} SELL: {"OK" if order_sell_id is not None else "ERROR"} '
                 sm.send_to_telegram(msg)
@@ -255,7 +255,7 @@ class Bot:
 
           if no_ammount_to_invest_count > 0:
             msg = f'No Amount to invest :Tryed {no_ammount_to_invest_count} times.  ${balance:.{quote_precision}f} Min: ${myenv.min_amount_to_invest:.{quote_precision}f} '
-            sm.send_status_to_telegram(f'{self.ix}: {msg}')
+            sm.send_status_to_telegram(f'{self.ix_symbol}: {msg}')
             no_ammount_to_invest_count = 0
 
       except Exception as e:
