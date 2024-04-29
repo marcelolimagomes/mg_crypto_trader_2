@@ -96,7 +96,7 @@ def main(interval_list, log_level):
   for interval in interval_list:
     for symbol in utils.get_symbol_list():
       try:
-        log.info(f"Training {symbol} - {interval}")
+        log.info(f"Start training {symbol} - {interval}")
 
         log.info(f"Getting data...")
         df = get_data(symbol=symbol, interval=interval)

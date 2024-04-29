@@ -64,9 +64,8 @@ def main(args):
 
   if '-train' in args:
     try:
-      for interval in interval_list:
-        log.info(f'Starting train, in interval ({interval}) for all Symbols in database...')
-        train.main(interval_list, log_level)
+      log.info(f'Starting train, in interval ({interval_list}) for all Symbols in database...')
+      train.main(interval_list, log_level)
     except Exception as e:
       log.exception(e)
       traceback.print_stack()
