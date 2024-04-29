@@ -103,7 +103,7 @@ def main(interval_list, log_level):
 
         periods = utils.get_periods_for_interval(interval)
         log.info(f"Feature engineering for periods: {periods}...")
-        df = feature_engeneering(df, shift_periods=periods)
+        df = feature_engeneering(df, profit_target=(myenv.stop_loss / 100), shift_periods=periods)
 
         log.info(f"Training...")
         train(symbol, interval, df)
