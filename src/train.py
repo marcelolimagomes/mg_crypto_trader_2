@@ -33,7 +33,8 @@ def get_data(symbol, interval):
 
 def feature_engeneering(df, profit_target=0.015, shift_periods=24, dropna=True, status=True):
   # Calc EMA
-  df = calc_utils.calc_ema_periods(df, [150, 200, 250, 300], close_price="close", diff_price=True)
+  print(">>>>>>>>>>> RANGE", list(range(myenv.min_rsi, myenv.max_rsi + 1, myenv.step_rsi)))
+  df = calc_utils.calc_ema_periods(df, list(range(myenv.min_rsi, myenv.max_rsi + 1, myenv.step_rsi)), close_price="close", diff_price=True)
   # Calc RSI
   df = calc_utils.calc_RSI(df, close_price="close", window=14, fillna=False, last_one=False)
   # Calc AMPLITUDE
@@ -76,7 +77,7 @@ def train(symbol, interval, data, train_size=0.9, shuffle=True, use_gpu=False):
       data_split_stratify=shuffle,
       target="status",
       fix_imbalance=True,
-      fix_imbalance_method=AllKNN(allow_minority=False, kind_sel="all", n_jobs=-1, n_neighbors=3, sampling_strategy="auto", random_state=SESSION_ID),
+      fix_imbalance_method=AllKNN(allow_minority=False, kind_sel="all", n_jobs=-1, n_neighbors=3, sampling_strategy="auto"),
       session_id=SESSION_ID,
       fold=3,
       use_gpu=use_gpu,

@@ -3,6 +3,7 @@ import logging
 
 import src.utils as utils
 import src.myenv as myenv
+import src.send_message as sm
 
 from multiprocessing import Process
 from src.bot import Bot
@@ -28,8 +29,14 @@ class RunMultiBots:
         new_params = self.params.copy()
         new_params['symbol'] = symbol
         new_params['interval'] = interval
+        new_params['target_margin'] = myenv.stop_loss
+        new_params['stop_loss_multiplier'] = myenv.stop_loss_multiplier
+        new_params['step_rsi'] = myenv.step_rsi
+        new_params['p_ema'] = myenv.p_ema
+
+        sm.send_status_to_telegram(f'Starting bot for {ix_symbol}')
+        self.log.info(f'Starting bot for {ix_symbol}')
 
         robo = Bot(new_params)
-        self.log.info(f'Running bot for {ix_symbol}')
         process = Process(target=robo.run, name=ix_symbol)
         process.start()

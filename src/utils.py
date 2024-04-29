@@ -1,20 +1,37 @@
+from binance import AsyncClient as Client
+from binance.exceptions import BinanceAPIException
+
 import pandas as pd
 import os
 import sys
 import traceback
 import logging
 import pytz
+import time
+import numpy as np
 
 import src.myenv as myenv
+import src.send_message as sm
 
-from binance.client import Client
 from datetime import datetime, timedelta
 from multiprocessing import Pool
 
-log = logging.getLogger('crypto-analysis')
-log.setLevel('DEBUG')
+import asyncio
+
+loop = asyncio.new_event_loop()
+
+log = logging.getLogger()
+client: Client = None
 
 SESSION_ID = 123
+
+
+def get_telegram_key():
+  with open(f'{sys.path[0]}/telegram.key', 'r') as file:
+    first_line = file.readline()
+    if not first_line:
+      raise Exception('telegram.key is empty')
+  return first_line
 
 
 def date_parser(x):
@@ -191,10 +208,9 @@ def remove_cols_for_klines(columns):
 
 
 def get_klines(symbol, interval='1h', max_date='2010-01-01', limit=1000, columns=['open_time', 'close'], parse_dates=True):
-  # return pd.DataFrame()
+    # return pd.DataFrame()
   start_time = datetime.now()
-  client = Client()
-  klines = client.get_historical_klines(symbol=symbol, interval=interval, start_str=max_date, limit=limit)
+  klines = loop.run_until_complete(get_client().get_historical_klines(symbol=symbol, interval=interval, start_str=max_date, limit=limit))
 
   columns = remove_cols_for_klines(columns)
 
@@ -317,7 +333,6 @@ def adjust_index(df):
 
 
 def configure_log(name="MAIN", symbol=None, interval=None, log_level=logging.INFO):
-  print(f'Configure Log: {name} - {symbol} - {interval} - {log_level}')
   format_date = f'%Y-%m-%d %H:%M:%S'
   if symbol is not None:
     format_msg = f'[%(asctime)s] - %(levelname)s - {name}: {symbol}-{interval} - %(message)s'
@@ -340,4 +355,312 @@ def configure_log(name="MAIN", symbol=None, interval=None, log_level=logging.INF
 
   logger.addHandler(fh)
   logger.addHandler(sh)
+  print(f'>>>Configure Log: Name: {complete_name} - Level: {log_level}')
   return logger
+
+
+def login_binance() -> Client:
+  key, sec = get_keys()
+  _client = loop.run_until_complete(Client.create(key, sec, requests_params={'timeout': 20}, loop=loop))
+  print('>>>> LOGIN', _client)
+  # _client.REQUEST_TIMEOUT = 20
+  return _client
+
+
+def get_client() -> Client:
+  global client
+  if client is None:
+    client = login_binance()
+    log.debug(f'New Instance of Client: {client}')
+    print(f'New Instance of Client: {client}')
+
+  return client
+
+
+def get_precision(tick_size: float) -> int:
+  result = 8
+  if tick_size >= 1.0:
+    result = 0
+  elif tick_size >= 0.1:
+    result = 1
+  elif tick_size >= 0.01:
+    result = 2
+  elif tick_size >= 0.001:
+    result = 3
+  elif tick_size >= 0.0001:
+    result = 4
+  elif tick_size >= 0.00001:
+    result = 5
+  elif tick_size >= 0.000001:
+    result = 6
+  elif tick_size >= 0.0000001:
+    result = 7
+  return result
+
+
+def get_account_balance(asset=myenv.asset_balance_currency):
+  asset_balance = loop.run_until_complete(get_client().get_asset_balance(asset, recvWindow=myenv.recv_window))
+  balance = float(asset_balance['free'])
+
+  return balance
+
+
+def get_amount_to_invest():
+  balance = get_account_balance()
+  amount_invested = 0.0
+
+  if balance >= myenv.min_amount_to_invest:
+    if balance >= myenv.default_amount_to_invest:
+      amount_invested = myenv.default_amount_to_invest
+    elif balance > 0 and balance < myenv.default_amount_to_invest:
+      amount_invested = balance
+      # balance -= amount_invested
+
+  return amount_invested, balance
+
+
+def get_symbol_info(symbol):
+  '''
+      return symbol_info, symbol_precision, step_size, tick_size
+  '''
+  symbol_info = loop.run_until_complete(get_client().get_symbol_info(symbol=symbol))
+  symbol_precision = int(symbol_info['baseAssetPrecision'])
+  quote_precision = int(symbol_info['quoteAssetPrecision'])
+  for filter in symbol_info['filters']:
+    if filter['filterType'] == 'LOT_SIZE':
+      # stepSize defines the intervals that a quantity/icebergQty can be increased/decreased by
+      step_size = float(filter['stepSize'])
+    if filter['filterType'] == 'PRICE_FILTER':
+      # tickSize defines the intervals that a price/stopPrice can be increased/decreased by; disabled on tickSize == 0
+      tick_size = float(filter['tickSize'])
+
+  quantity_precision = get_precision(step_size)
+  price_precision = get_precision(tick_size)
+
+  symbol_info['step_size'] = step_size
+  symbol_info['quantity_precision'] = quantity_precision
+  symbol_info['tick_size'] = tick_size
+  symbol_info['price_precision'] = price_precision
+  symbol_info['symbol_precision'] = symbol_precision
+
+  return symbol_info, symbol_precision, quote_precision, quantity_precision, price_precision, step_size, tick_size
+
+
+def calc_take_profit_stop_loss(strategy, actual_value: float, margin: float, stop_loss_multiplier=myenv.stop_loss_multiplier):
+  take_profit_value = 0.0
+  stop_loss_value = 0.0
+  if strategy.startswith('SHORT'):  # Short
+    take_profit_value = actual_value * (1 - margin / 100)
+    stop_loss_value = actual_value * (1 + (margin * stop_loss_multiplier) / 100)
+  elif strategy.startswith('LONG'):  # Long
+    take_profit_value = actual_value * (1 + margin / 100)
+    stop_loss_value = actual_value * (1 - (margin * stop_loss_multiplier) / 100)
+  return take_profit_value, stop_loss_value
+
+
+def get_params_operation(operation_date, symbol: str, interval: str, operation: str, target_margin: float, amount_invested: float, take_profit: float, stop_loss: float, purchase_price: float, rsi: float, sell_price: float,
+                         profit_and_loss: float, margin_operation: float, strategy: str, balance: float, symbol_precision: int, quote_precision: int, quantity_precision: int, price_precision: int, step_size: float, tick_size: float):
+  params_operation = {'operation_date': datetime.fromtimestamp(int(operation_date.astype(np.int64)) / 1000000000),
+                      'symbol': symbol,
+                      'interval': interval,
+                      'operation': operation,
+                      'target_margin': target_margin,
+                      'amount_invested': amount_invested,
+                      'take_profit': take_profit,
+                      'stop_loss': stop_loss,
+                      'purchase_price': purchase_price,
+                      'sell_price': sell_price,
+                      'pnl': profit_and_loss,
+                      'rsi': rsi,
+                      'margin_operation': margin_operation,
+                      'strategy': strategy,
+                      'balance': balance,
+                      'symbol_precision': symbol_precision,
+                      'price_precision': price_precision,
+                      'tick_size': tick_size,
+                      'step_size': step_size,
+                      'quantity_precision': quantity_precision,
+                      'quote_precision': quote_precision,
+                      }
+  return params_operation
+
+
+def status_order_buy(symbol, interval):
+  res_is_buying = False
+  id = f'{symbol}_{interval}_buy'
+  purchased_price = 0.0
+  executed_qty = 0.0
+  amount_invested = 0.0
+  try:
+    order = loop.run_until_complete(get_client().get_order(symbol=symbol, origClientOrderId=id, recvWindow=myenv.recv_window))
+    res_is_buying = order['status'] in [Client.ORDER_STATUS_NEW, Client.ORDER_STATUS_PARTIALLY_FILLED]
+    purchased_price = float(order['price'])
+    executed_qty = float(order['executedQty'])
+    amount_invested = purchased_price * executed_qty
+  except Exception as e:
+    log.exception(f'status_order_buy - ERROR: {e}')
+    sm.send_status_to_telegram(f'{symbol}_{interval} - status_order_buy - ERROR: {e}')
+  return res_is_buying, order, purchased_price, executed_qty, amount_invested
+
+
+def get_asset_balance(asset=myenv.asset_balance_currency, quantity_precision: int = 2):
+  filled_asset_balance = loop.run_until_complete(get_client().get_asset_balance(asset, recvWindow=myenv.recv_window))
+  int_quantity = filled_asset_balance['free'].split('.')[0]
+  frac_quantity = filled_asset_balance['free'].split('.')[1][:quantity_precision]
+  quantity = float(int_quantity + '.' + frac_quantity)
+  return quantity
+
+
+def register_oco_sell(params):
+  log.warn(f'Trying to register order_oco_sell: Params> {params}')
+
+  symbol = params['symbol']
+  interval = params['interval']
+
+  limit_client_order_id = f'{symbol}_{interval}_limit'
+  stop_client_order_id = f'{symbol}_{interval}_stop'
+  price_precision = params['price_precision']
+  quantity_precision = params['quantity_precision']
+  take_profit = round(params['take_profit'], price_precision)
+  stop_loss_trigger = round(params['stop_loss'], price_precision)
+  stop_loss_target = round(stop_loss_trigger * 0.95, price_precision)
+
+  _quantity = get_asset_balance(symbol.split('USDT')[0], quantity_precision)
+  if _quantity > round(params['quantity'] * 1.05, quantity_precision):  # Sell 5% more quantity if total quantity of asset is more than
+    quantity = round(params['quantity'] * 1.05, quantity_precision)
+  elif _quantity >= round(params['quantity'], quantity_precision):  # Sell exactly quantity buyed
+    quantity = round(params['quantity'], quantity_precision)
+  else:
+    quantity = _quantity  # Sell all quantity of asset
+
+  oco_params = {}
+  oco_params['symbol'] = params['symbol']
+  oco_params['quantity'] = quantity
+  oco_params['price'] = str(take_profit)
+  oco_params['stopPrice'] = str(stop_loss_trigger)
+  oco_params['stopLimitPrice'] = str(stop_loss_target)
+  oco_params['stopLimitTimeInForce'] = 'GTC'
+  oco_params['limitClientOrderId'] = limit_client_order_id
+  oco_params['stopClientOrderId'] = stop_client_order_id
+  oco_params['recvWindow'] = myenv.recv_window
+
+  info_msg = f'ORDER SELL: {symbol}_{interval} - oco_params: {oco_params} - price_precision: {price_precision} - quantity_precision: {quantity_precision}'
+  log.warn(info_msg)
+  # sm.send_to_telegram(info_msg)
+
+  oder_oco_sell_id = loop.run_until_complete(get_client().order_oco_sell(**oco_params))
+  sm.send_status_to_telegram(info_msg + f' - oder_oco_sell_id: {oder_oco_sell_id}')
+  log.warn(f'oder_oco_sell_id: {oder_oco_sell_id}')
+  return oder_oco_sell_id
+
+
+def register_operation(params):
+  status, order_buy_id, order_oco_id = None, None, None
+  try:
+    log.warn(f'Trying to register order_limit_buy: Params> {params}')
+
+    symbol = params['symbol']
+    interval = params['interval']
+    new_client_order_id = f'{symbol}_{interval}_buy'
+    quantity_precision = params['quantity_precision']
+    price_precision = params['price_precision']
+    amount_invested = params['amount_invested']
+
+    price_order = round(params['purchase_price'], price_precision)  # get_client().get_symbol_ticker(symbol=params['symbol'])
+    params['purchase_price'] = price_order
+    quantity = round(amount_invested / price_order, quantity_precision)
+    params['quantity'] = quantity
+
+    order_params = {}
+    order_params['symbol'] = symbol
+    order_params['quantity'] = quantity
+    order_params['price'] = str(price_order)
+    order_params['newClientOrderId'] = new_client_order_id
+    order_params['recvWindow'] = myenv.recv_window
+
+    order_buy_id = loop.run_until_complete(get_client().order_limit_buy(**order_params))
+
+    info_msg = f'ORDER BUY: {order_params}'
+    log.warn(info_msg)
+    sm.send_status_to_telegram(info_msg + f'order_buy_id: {order_buy_id}')
+    log.warn(f'order_buy_id: {order_buy_id}')
+
+    purchase_attemps = 0
+    is_buying, order_buy_id, _, _, _ = status_order_buy(params["symbol"], params["interval"])
+    status = order_buy_id['status']
+    while is_buying:
+      if purchase_attemps > myenv.max_purchase_attemps:
+        if status == Client.ORDER_STATUS_NEW:  # Can't buy after max_purchase_attemps, than cancel
+          loop.run_until_complete(get_client().cancel_order(symbol=params['symbol'], origClientOrderId=new_client_order_id, recvWindow=myenv.recv_window))
+          err_msg = f'Can\'t buy {params["symbol"]} after {myenv.max_purchase_attemps} attemps'
+          log.error(err_msg)
+          sm.send_status_to_telegram(f'[ERROR]: {symbol}_{interval}: {err_msg}')
+          return status, None, None
+        elif status == Client.ORDER_STATUS_PARTIALLY_FILLED:  # Partially filled, than try sell quantity partially filled
+          msg = f'BUYING OrderId: {order_buy_id["orderId"]} Partially filled, than try sell quantity partially filled'
+          log.warn(msg)
+          sm.send_status_to_telegram(f'[WARNING]: {symbol}_{interval}: {msg}')
+          break
+      purchase_attemps += 1
+      time.sleep(1)
+      is_buying, order_buy_id, _, _, _ = status_order_buy(params["symbol"], params["interval"])
+      status = order_buy_id['status']
+
+    order_oco_id = register_oco_sell(params)
+  except Exception as e:
+    log.exception(e)
+    sm.send_status_to_telegram(f'[ERROR] register_operation: {symbol}_{interval}: {e}')
+    traceback.print_stack()
+
+  return status, order_buy_id, order_oco_id
+
+
+def status_order_limit(symbol, interval):
+  id_limit = f'{symbol}_{interval}_limit'
+
+  order = None
+  res_is_purchased = False
+  take_profit = 0.0
+  try:
+    order = loop.run_until_complete(get_client().get_order(symbol=symbol, origClientOrderId=id_limit, recvWindow=myenv.recv_window))
+    res_is_purchased = order['status'] in [Client.ORDER_STATUS_NEW, Client.ORDER_STATUS_PARTIALLY_FILLED]
+    take_profit = float(order['price'])
+  except BinanceAPIException as e:
+    if e.code != -2013:
+      log.exception(f'status_order_limit - ERROR: {e}')
+      sm.send_status_to_telegram(f'{symbol}_{interval} - status_order_limit - ERROR: {e}')
+  except Exception as e:
+    log.exception(f'status_order_limit - ERROR: {e}')
+    sm.send_status_to_telegram(f'{symbol}_{interval} - status_order_limit - ERROR: {e}')
+
+  return res_is_purchased, order, take_profit
+
+
+def status_order_stop(symbol, interval):
+  id_stop = f'{symbol}_{interval}_stop'
+
+  order = None
+  res_is_purchased = False
+  stop_loss = 0.0
+  try:
+    order = loop.run_until_complete(get_client().get_order(symbol=symbol, origClientOrderId=id_stop, recvWindow=myenv.recv_window))
+    res_is_purchased = order['status'] in [Client.ORDER_STATUS_NEW, Client.ORDER_STATUS_PARTIALLY_FILLED]
+    stop_loss = float(order['stopPrice'])
+  except Exception as e:
+    log.exception(f'status_order_stop - ERROR: {e}')
+    sm.send_status_to_telegram(f'{symbol}_{interval} - status_order_stop - ERROR: {e}')
+
+  return res_is_purchased, order, stop_loss
+
+
+def format_date(date):
+  result = ''
+  _format = '%Y-%m-%d %H:%M:%S'
+  if date is not None:
+    result = f'{date}'
+    if isinstance(date, np.datetime64):
+      result = pd.to_datetime(date, unit='ms').strftime(_format)
+    elif isinstance(date, datetime):
+      result = date.strftime(_format)
+
+  return result

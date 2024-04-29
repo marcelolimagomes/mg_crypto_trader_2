@@ -1,16 +1,21 @@
-from src.run_multi_bots import RunMultiBots
+import sys
+import os
+import logging
 
 import src.utils as utils
 import src.myenv as myenv
 import src.train as train
-import os
 import traceback
 
-import sys
-import logging
+from src.run_multi_bots import RunMultiBots
 
 
 def main(args):
+
+  if not os.path.exists('./logs'):
+    os.makedirs('./logs')
+  myenv.telegram_key.append(utils.get_telegram_key())
+
   print(f'args: {args}')
   interval_list = ['1h']
   log_level = logging.DEBUG
@@ -81,8 +86,14 @@ def main(args):
       })
       bots.run()
     except Exception as e:
-      log.exception(e)
       traceback.print_stack()
+      err_msg = f'ERROR: - Exception: {e}'
+      log.exception(err_msg)
+      log.info(">>>> BOT FINISHED WITH ERROR <<<<")
+      sys.exit(-9)
+    finally:
+      log.info(">>>> BOT FINISHED WITH SUCCESS <<<<")
+      sys.exit(0)
 
 
 if __name__ == '__main__':

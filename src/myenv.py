@@ -36,10 +36,10 @@ regression_times = 24 * 30 * 2  # horas
 times_regression_profit_and_loss = 24
 n_jobs = -1
 train_size = 0.7
-estimator = 'xgboost'
+estimator = 'et'
 symbol = 'BTCUSDT'
 saldo_inicial = 100
-stop_loss_multiplier = 5
+stop_loss_multiplier = 3
 stop_loss_range_multiplier = 7
 range_min_rsi_end = 60
 range_max_rsi_start = 68
@@ -65,8 +65,9 @@ producao = True
 
 telegram_key = []
 
-min_rsi = 30
-max_rsi = 70
+min_rsi = 150
+max_rsi = 300
+step_rsi = 50
 p_ema = 200
 
 retrain_last_results = 100
