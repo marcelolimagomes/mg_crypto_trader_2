@@ -20,7 +20,7 @@ import asyncio
 
 loop = asyncio.new_event_loop()
 
-log = logging.getLogger()
+log = logging.getLogger("MAIN")
 client: Client = None
 
 SESSION_ID = 123
