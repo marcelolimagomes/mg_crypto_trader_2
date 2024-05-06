@@ -26,7 +26,7 @@ class Bot:
     self.interval = params['interval']
     self.ix_symbol = f'{self.symbol}_{self.interval}'
     self.verbose = params['verbose']
-    self.date_read_kline = datetime(1900, 1, 1)
+    self.date_read_kline = None
     self.data = None
     self.target_margin = float(params['target_margin'])
     self.stop_loss_multiplier = int(params['stop_loss_multiplier'])
@@ -59,11 +59,14 @@ class Bot:
     self.mutex.release()
 
   def feature_engeneering(self):
-    last_update = self.date_read_kline.strftime('%Y-%m-%d %H:%M:%S') if self.date_read_kline is not None else 'None'
-    self.log.info(f"Feature engineering for periods: {self.periods} - Last updated: {last_update}")
+    df_result = None
     try:
       self.mutex.acquire()
-      self.data = train.feature_engeneering(self.data, shift_periods=self.periods, dropna=False, status=False)
+      last_update = self.date_read_kline.strftime('%Y-%m-%d %H:%M:%S') if self.date_read_kline is not None else 'None'
+      self.log.info(f"Feature engineering for periods: {self.periods} - Last updated: {last_update}")
+      if self.data is not None:
+        self.data = train.feature_engeneering(self.data, shift_periods=self.periods, dropna=False, status=False)
+        df_result = self.data.tail(1).copy()
       self.mutex.release()
     except Exception as error:
       self.log.exception(error)
@@ -71,6 +74,7 @@ class Bot:
       traceback.print_stack()
       if self.mutex.locked():
         self.mutex.release()
+    return df_result
 
   def log_info(self, purchased: bool, open_time, purchased_price: float, actual_price: float, margin_operation: float, amount_invested: float, profit_and_loss: float, balance: float, take_profit: float,
                stop_loss: float, target_margin: float, strategy: str, p_ema_label: str, p_ema_value: float):
@@ -130,11 +134,11 @@ class Bot:
         self.data = pd.concat([self.data, df_klines])
         self.data.drop_duplicates(keep='last', subset=['open_time'], inplace=True)
         self.data.sort_index(inplace=True)
+        self.date_read_kline = datetime.now()
         self.mutex.release()
 
         self.log.info(f'handle_socket_kline: Updated - _all_data.shape: {self.data.shape}') if self.verbose else None
         self.data.info() if self.verbose else None
-        self.date_read_kline = datetime.now()
     except Exception as e:
       self.log.error(f'***ERROR*** handle_socket_kline: {e}')
       self.log.exception(e)
@@ -186,26 +190,30 @@ class Bot:
 
     no_ammount_to_invest_count = 0
 
+    first_update = True
+
     while True:
       try:
-        seconds_after_last_update = datetime.now() - self.date_read_kline
-        if seconds_after_last_update.seconds >= 60:
-          self.log.info(f'Updating data for Symbol: {self.ix_symbol} after {seconds_after_last_update.seconds} seconds')
-          sm.send_status_to_telegram(f'Updating data for Symbol: {self.ix_symbol} after {seconds_after_last_update.seconds} seconds')
+        if first_update:
+          seconds_after_last_update = 61
+        else:
+          seconds_after_last_update = (datetime.now() - self.date_read_kline).seconds
+
+        if seconds_after_last_update >= 60:
+          self.log.info(f'Updating data for Symbol: {self.ix_symbol} after {seconds_after_last_update} seconds. First Update: {first_update}.')
+          sm.send_status_to_telegram(f'Updating data for Symbol: {self.ix_symbol} after {seconds_after_last_update} seconds. First Update: {first_update}.')
           self.update_data_from_web()
           self.log.info(f'Data Shape[{self.ix_symbol}]: {self.data.shape}')
           sm.send_status_to_telegram(f'Data Shape[{self.ix_symbol}]: {self.data.shape}')
+          first_update = False
 
-        self.feature_engeneering()
-        self.mutex.acquire()
-        df_aux = self.data.tail(1).copy().drop(columns=['open_time'], errors='ignore')
-        self.mutex.release()
-        if df_aux.isnull().sum() > 0:
-          df_aux.info()
+        df_aux = self.feature_engeneering()
+        if (df_aux is None) or (df_aux.isna().any(axis=1).sum() > 0):
+          df_aux.info() if df_aux is not None else None
           self.log.error(f'ERRO: {self.ix_symbol}: Feature Engeneering generated NaN values. Data: {df_aux}')
           self.sm.send_status_to_telegram(f'ERRO: {self.ix_symbol}: Feature Engeneering generated NaN values. Data: {df_aux}')
           continue
-        pred = self.model.predict(df_aux)
+        pred = self.model.predict(df_aux.drop(columns=['open_time'], errors='ignore'))
         strategy = pred.values[0]
         actual_price, open_time, rsi, p_ema_value = df_aux['close'].values[0], df_aux['open_time'].values[0], df_aux['rsi'].values[0], df_aux[p_ema_label].values[0]
         _open_time = utils.format_date(open_time)
@@ -271,13 +279,13 @@ class Bot:
             no_ammount_to_invest_count = 0
 
       except Exception as e:
-        traceback.print_stack()
-        err_msg = f'ERROR: symbol: {self.ix_symbol} - Exception: {e}'
+        err_msg = f'ERROR: symbol: {self.ix_symbol} - Exception: {e} - data_aux: {df_aux}'
         self.log.exception(err_msg)
         sm.send_status_to_telegram(err_msg)
         if self.mutex.locked():
           self.mutex.release()
-        self.log.warn(f'{self.ix_symbol} will sleep 300s after error: {e}')
+        self.log.warn(f'ERROR: {self.ix_symbol} will sleep 300s after error: {e}')
+        traceback.print_stack()
         time.sleep(300)
       finally:
           # Sleep in each loop
