@@ -265,6 +265,8 @@ class Bot:
         sm.send_status_to_telegram(err_msg)
         if self.mutex.locked():
           self.mutex.release()
+        self.log.warn(f'{self.ix_symbol} will sleep 300s after error: {e}')
+        time.sleep(300)  
       finally:
           # Sleep in each loop
         time.sleep(myenv.sleep_refresh)

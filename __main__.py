@@ -90,9 +90,8 @@ def main(args):
       log.exception(err_msg)
       log.info(">>>> BOT FINISHED WITH ERROR <<<<")
       sys.exit(-9)
-    finally:
-      log.info(">>>> BOT FINISHED WITH SUCCESS <<<<")
-      sys.exit(0)
+
+  log.info(">>>> BOT FINISHED WITH SUCCESS <<<<")
 
 
 if __name__ == '__main__':

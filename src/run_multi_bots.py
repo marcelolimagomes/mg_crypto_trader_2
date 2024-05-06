@@ -8,11 +8,13 @@ import src.send_message as sm
 from multiprocessing import Process
 from src.bot import Bot
 
+import traceback
+import time
 
 class RunMultiBots:
   def __init__(self, params):
     self.params = params
-    self.log = logging.getLogger()
+    self.log = logging.getLogger("MAIN")
     # Initialize logging
     if 'log_level' in params:
       self.log = utils.configure_log(log_level=params['log_level'])
@@ -23,6 +25,7 @@ class RunMultiBots:
     symbols = utils.get_symbol_list()
     interval_list = self.params['interval_list']
 
+    plist = []
     for symbol in symbols:
       for interval in interval_list:
         ix_symbol = f'{symbol}_{interval}'
@@ -34,9 +37,25 @@ class RunMultiBots:
         new_params['step_rsi'] = myenv.step_rsi
         new_params['p_ema'] = myenv.p_ema
 
-        sm.send_status_to_telegram(f'Starting bot for {ix_symbol}')
         self.log.info(f'Starting bot for {ix_symbol}')
 
-        robo = Bot(new_params)
-        process = Process(target=robo.run, name=ix_symbol)
-        process.start()
+        try:
+          robo = Bot(new_params)
+          process = Process(target=robo.run, name=ix_symbol)
+          plist.append({'name': ix_symbol, 'params': new_params, 'process': process})
+          process.start()
+
+          sm.send_status_to_telegram(f'Starting bot for {ix_symbol}') 
+        except Exception as e:
+          self.log.exception(f'{ix_symbol} ERRO: {e}')
+          traceback.print_stack()
+
+    while True:
+      try:
+        for p in plist:
+          self.log.info(f'Status process: {p["name"]} - {p["process"]}')
+          #p['process'].join()
+      except Exception as e:
+        self.log.exception(f'ERRO: {e}')
+      finally:    
+        time.sleep(300)
