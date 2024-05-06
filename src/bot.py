@@ -202,7 +202,8 @@ class Bot:
         self.mutex.release()
         if df_aux.isnull().sum() > 0:
           df_aux.info()
-          self.log.error(f'ERRO: Feature Engeneering generated NaN values. Data: {df_aux}')
+          self.log.error(f'ERRO: {self.ix_symbol}: Feature Engeneering generated NaN values. Data: {df_aux}')
+          self.sm.send_status_to_telegram(f'ERRO: {self.ix_symbol}: Feature Engeneering generated NaN values. Data: {df_aux}')
           continue
         pred = self.model.predict(df_aux)
         strategy = pred.values[0]
