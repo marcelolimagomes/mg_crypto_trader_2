@@ -67,6 +67,8 @@ class Bot:
       self.mutex.release()
     except Exception as error:
       self.log.exception(error)
+      self.log.exception(error)
+      traceback.print_stack()
       if self.mutex.locked():
         self.mutex.release()
 
@@ -135,6 +137,8 @@ class Bot:
         self.date_read_kline = datetime.now()
     except Exception as e:
       self.log.error(f'***ERROR*** handle_socket_kline: {e}')
+      self.log.exception(e)
+      traceback.print_stack()
       sm.send_status_to_telegram(f'{self.ix_symbol} ***ERROR*** handle_socket_kline: {e}')
       if self.mutex.locked():
         self.mutex.release()
@@ -193,9 +197,16 @@ class Bot:
           sm.send_status_to_telegram(f'Data Shape[{self.ix_symbol}]: {self.data.shape}')
 
         self.feature_engeneering()
-        pred = self.model.predict(self.data.tail(1).drop(columns=['open_time'], errors='ignore'))
+        self.mutex.acquire()
+        df_aux = self.data.tail(1).copy().drop(columns=['open_time'], errors='ignore')
+        self.mutex.release()
+        if df_aux.isnull().sum() > 0:
+          df_aux.info()
+          self.log.error(f'ERRO: Feature Engeneering generated NaN values. Data: {df_aux}')
+          continue
+        pred = self.model.predict(df_aux)
         strategy = pred.values[0]
-        actual_price, open_time, rsi, p_ema_value = self.data.tail(1)['close'].values[0], self.data.tail(1)['open_time'].values[0], self.data.tail(1)['rsi'].values[0], self.data.tail(1)[p_ema_label].values[0]
+        actual_price, open_time, rsi, p_ema_value = df_aux['close'].values[0], df_aux['open_time'].values[0], df_aux['rsi'].values[0], df_aux[p_ema_label].values[0]
         _open_time = utils.format_date(open_time)
 
         # COPY BUY LOGIC
@@ -266,7 +277,7 @@ class Bot:
         if self.mutex.locked():
           self.mutex.release()
         self.log.warn(f'{self.ix_symbol} will sleep 300s after error: {e}')
-        time.sleep(300)  
+        time.sleep(300)
       finally:
           # Sleep in each loop
         time.sleep(myenv.sleep_refresh)

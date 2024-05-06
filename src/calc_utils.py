@@ -4,7 +4,10 @@ import numpy as np
 import gc
 import logging
 import sys
+import traceback
+
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
+
 
 valid_times = ['1mo', '2mo', '3mo', '6mo', '1y', '2y', '3y', '4y', '5y']
 
@@ -139,9 +142,9 @@ def calc_RSI(df: pd.DataFrame, close_price='close', window=14, fillna=False, las
           df['rsi'].fillna(0.0, inplace=True)
         df['rsi'] = df['rsi'].astype('float32')
       except Exception as error:
-        log.error('calc_RSI: last_one=FALSE: Erro no calculo do RSI!')
+        log.error(f'calc_RSI: last_one={last_one}: Erro no calculo do RSI!')
         log.exception(error)
-        # traceback.print_exc()
+        traceback.print_exc()
       finally:
         df.drop(columns=['change', 'gain', 'loss', 'avg_gain', 'avg_loss', 'rs'], inplace=True, errors='ignore')
 
