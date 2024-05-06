@@ -56,6 +56,7 @@ class Bot:
     # self.data = utils.get_data(self.symbol, self.interval, columns=myenv.all_klines_cols, parse_dates=False, tail=350)
     self.data.drop(columns=["close_time", "volume", "quote_asset_volume", "number_of_trades", "taker_buy_base_asset_volume",
                             "taker_buy_quote_asset_volume", "ignore"], inplace=True, errors='ignore')
+    self.date_read_kline = datetime.now()
     self.mutex.release()
 
   def feature_engeneering(self):
@@ -194,7 +195,7 @@ class Bot:
 
     while True:
       try:
-        if first_update:
+        if self.data is None:
           seconds_after_last_update = 61
         else:
           seconds_after_last_update = (datetime.now() - self.date_read_kline).seconds
